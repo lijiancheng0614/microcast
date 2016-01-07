@@ -8,6 +8,7 @@ from urllib.parse import urljoin
 
 RECV_BUFSIZE = 1024
 TIMEOUT = 0.1
+BYTE_SPACE = ' '.encode()
 
 class Master(object):
     def __init__(self, host, port, segments, K=5, TRIED_TIMES=5):
@@ -36,16 +37,19 @@ class Master(object):
             if not self.response_queue:
                 continue
             (sock, data) = self.response_queue.popleft()
-            (status, segment) = data.split(';')
-            if status == 'DONE' or status == 'FAIL':
-                if segment in self.backlog_dict[sock]:
-                    self.backlog_dict[sock].remove(segment)
-                    if status == 'DONE':
-                        print('Done downloading {}.'.format(segment))
-                        self.N -= 1
-                    else:
-                        print('Fail downloading {}.'.format(segment))
-                        self.fail_segment(segment)
+            try:
+                (status, segment) = data.split(';')
+                if status == 'DONE' or status == 'FAIL':
+                    if segment in self.backlog_dict[sock]:
+                        self.backlog_dict[sock].remove(segment)
+                        if status == 'DONE':
+                            print('Done downloading {}.'.format(segment))
+                            self.N -= 1
+                        else:
+                            print('Fail downloading {}.'.format(segment))
+                            self.fail_segment(segment)
+            except Exception as e:
+                print('[ERROR] response {}.'.format(data))
     def get_slaves(self):
         self.server_socket.bind(self.address)
         self.server_socket.listen(5)
@@ -59,14 +63,16 @@ class Master(object):
                     print('Client {}:{} connected.'.format(client_address[0], client_address[1]))
                 else:
                     try:
-                        data = sock.recv(RECV_BUFSIZE).decode()
+                        data = sock.recv(RECV_BUFSIZE).decode().strip()
                         self.response_queue.append((sock, data))
                     except Exception as e:
                         print('[ERROR] get_slaves {}'.format(e))
                         sock.close()
                         del self.backlog_dict[sock]
         for sock in self.backlog_dict.keys():
-            sock.send('FIN'.encode())
+            data = 'FIN'.encode()
+            data += BYTE_SPACE * (RECV_BUFSIZE - len(data))
+            sock.send(data)
             sock.close()
         self.server_socket.close()
     def get_smallest(self, d):
@@ -91,8 +97,10 @@ class Master(object):
                         if sock == mi_slave:
                             if segment in self.backlog_dict[sock]:
                                 continue
-                            sock.send('DOW;{}'.format(segment).encode())
-                            address = sock.getsockname()
+                            data = 'DOW;{}'.format(segment).encode()
+                            data += BYTE_SPACE * (RECV_BUFSIZE - len(data))
+                            sock.send(data)
+                            address = sock.getpeername()
                             print('Ask {}:{} to download {}.'.format(address[0], address[1], segment))
                             self.backlog_dict[sock].append(segment)
                             break
