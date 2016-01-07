@@ -17,7 +17,7 @@ BYTES_SEP = '/'.encode()
 BYTES_REQ = 'R'.encode()
 BYTE_SPACE = ' '.encode()
 
-class Slave(object):
+class MicroCast(object):
     def __init__(self, server_host, server_port, store_dir, broadcast_port=12345):
         self.client_socket = None
         server_address = (server_host, server_port)
@@ -169,7 +169,7 @@ class Slave(object):
         sock.close()
 
 def set_arguments():
-    parser = argparse.ArgumentParser(description='MircoDownload_slave')
+    parser = argparse.ArgumentParser(description='MicroCast')
     parser.add_argument('--host', required=True,
                         help='host')
     parser.add_argument('--port', type=int, required=True,
@@ -182,5 +182,5 @@ if __name__ == '__main__':
     parser = set_arguments()
     cmd_args = parser.parse_args()
 
-    slave = Slave(cmd_args.host, cmd_args.port, cmd_args.store_dir.strip())
-    slave.run()
+    microcast = MicroCast(cmd_args.host, cmd_args.port, cmd_args.store_dir.strip())
+    microcast.run()

@@ -10,7 +10,7 @@ RECV_BUFSIZE = 1024
 TIMEOUT = 0.1
 BYTE_SPACE = ' '.encode()
 
-class Master(object):
+class MicroCastCommander(object):
     def __init__(self, host, port, segments, K=5, TRIED_TIMES=5):
         self.address = (host, port)
         self.segments = segments[::-1]
@@ -22,17 +22,17 @@ class Master(object):
         self.failcount_dict = dict()
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_thread = Thread(target = self.get_slaves)
+        self.server_thread = Thread(target = self.get_peers)
         self.response_queue = deque()
-        self.handle_slave_response_thread = Thread(target = self.handle_slave_response)
+        self.handle_peer_response_thread = Thread(target = self.handle_peer_response)
     def fail_segment(self, segment):
-        # scenario 1: ask slave to download, not response
-        # scenario 2: ask slave to download, download fail
+        # scenario 1: ask peer to download, not response
+        # scenario 2: ask peer to download, download fail
         # if fail TRIED_TIMES times, ignore this segment
         self.failcount_dict[segment] = self.failcount_dict.get(segment, 0) + 1
         if self.failcount_dict[segment] < self.TRIED_TIMES:
             self.segments.append(segment)
-    def handle_slave_response(self):
+    def handle_peer_response(self):
         while not self.stop_flag:
             if not self.response_queue:
                 continue
@@ -50,12 +50,12 @@ class Master(object):
                             self.fail_segment(segment)
             except Exception as e:
                 print('[ERROR] response {}.'.format(data))
-    def get_slaves(self):
+    def get_peers(self):
         self.server_socket.bind(self.address)
         self.server_socket.listen(5)
         while not self.stop_flag:
-            slave_list = list(self.backlog_dict.keys())
-            read_sockets, write_sockets, error_sockets = select.select(slave_list + [self.server_socket], [], [], 0)
+            peer_list = list(self.backlog_dict.keys())
+            read_sockets, write_sockets, error_sockets = select.select(peer_list + [self.server_socket], [], [], 0)
             for sock in read_sockets:
                 if sock == self.server_socket:
                     client_socket, client_address = sock.accept()
@@ -66,7 +66,7 @@ class Master(object):
                         data = sock.recv(RECV_BUFSIZE).decode().strip()
                         self.response_queue.append((sock, data))
                     except Exception as e:
-                        print('[ERROR] get_slaves {}'.format(e))
+                        print('[ERROR] get_peers {}'.format(e))
                         sock.close()
                         del self.backlog_dict[sock]
         for sock in self.backlog_dict.keys():
@@ -81,7 +81,7 @@ class Master(object):
         print('{}:{} start.'.format(self.address[0], self.address[1]))
         try:
             self.server_thread.start()
-            self.handle_slave_response_thread.start()
+            self.handle_peer_response_thread.start()
             while not self.stop_flag:
                 if self.N <= 0:
                     break
@@ -89,12 +89,12 @@ class Master(object):
                     continue
                 if not self.backlog_dict:
                     continue
-                (mi_slave, mi_backlog) = self.get_smallest(self.backlog_dict)
+                (mi_peer, mi_backlog) = self.get_smallest(self.backlog_dict)
                 if len(mi_backlog) < self.K:
                     segment = self.segments.pop()
-                    read_sockets, write_sockets, error_sockets = select.select([], [mi_slave], [], 0)
+                    read_sockets, write_sockets, error_sockets = select.select([], [mi_peer], [], 0)
                     for sock in write_sockets:
-                        if sock == mi_slave:
+                        if sock == mi_peer:
                             if segment in self.backlog_dict[sock]:
                                 continue
                             data = 'DOW;{}'.format(segment).encode()
@@ -107,15 +107,15 @@ class Master(object):
             self.stop_flag = True
             while self.server_thread.is_alive():
                 self.server_thread.join(TIMEOUT)
-            while self.handle_slave_response_thread.is_alive():
-                self.handle_slave_response_thread.join(TIMEOUT)
+            while self.handle_peer_response_thread.is_alive():
+                self.handle_peer_response_thread.join(TIMEOUT)
         except Exception as e:
             print('[ERROR] run {}.'.format(e))
             self.stop_flag = True
             while self.server_thread.is_alive():
                 self.server_thread.join(TIMEOUT)
-            while self.handle_slave_response_thread.is_alive():
-                self.handle_slave_response_thread.join(TIMEOUT)
+            while self.handle_peer_response_thread.is_alive():
+                self.handle_peer_response_thread.join(TIMEOUT)
 
 def load_m3u8(url):
     m3u8_obj = m3u8.load(url)
@@ -140,7 +140,7 @@ def load_m3u8(url):
     return file_list
 
 def set_arguments():
-    parser = argparse.ArgumentParser(description='MircoDownload_master')
+    parser = argparse.ArgumentParser(description='MicroCastCommander')
     parser.add_argument('--host', required=True,
                         help='host')
     parser.add_argument('--port', type=int, required=True,
@@ -158,5 +158,5 @@ if __name__ == '__main__':
     # http://localhost:8000/m3u8/10.m3u8
     file_list = load_m3u8(cmd_args.url)
     print('load_m3u8 done.')
-    master = Master(cmd_args.host, cmd_args.port, file_list)
-    master.run()
+    microcast_commander = MicroCastCommander(cmd_args.host, cmd_args.port, file_list)
+    microcast_commander.run()

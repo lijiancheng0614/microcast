@@ -15,14 +15,14 @@ Reference: [MicroCast: cooperative video streaming on smartphones](http://dl.acm
 python -m http.server
 ```
 
-## Run microdownload_master
+## Run microcast
 
 ```bash
-python microdownload_master.py --host 59.66.123.114 --port 4000 --url "http://www.usdi.net.tw/video/hls/Taylor_W1_S1.ts.m3u8"
+python microcast.py --host 59.66.123.114 --port 4000 --store_dir "data"
 ```
 
-## Run microdownload_slave
+## Run microcast_commander
 
 ```bash
-python microdownload_slave.py --host 59.66.123.53 --port 4000 --store_dir "data"
+python microcast_commander.py --host 59.66.123.114 --port 4000 --url "http://www.usdi.net.tw/video/hls/Taylor_W1_S1.ts.m3u8"
 ```
