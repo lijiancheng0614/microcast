@@ -3,6 +3,7 @@ import time
 import select
 import socket
 import argparse
+import subprocess
 from threading import Thread
 from collections import deque
 from urllib.request import urlretrieve
@@ -16,6 +17,9 @@ BYTES_FILE_EOF = 'E'.encode()
 BYTES_SEP = '/'.encode()
 BYTES_REQ = 'R'.encode()
 BYTE_SPACE = ' '.encode()
+PLAYER_PATH = r'C:\Program Files (x86)\MPC-HC\mpc-hc.exe'
+
+flog = open('log_{}'.format(time.time()), 'w')
 
 class MicroCast(object):
     def __init__(self, server_host, server_port, store_dir, broadcast_port=12345):
@@ -42,10 +46,23 @@ class MicroCast(object):
         self.download_thread = Thread(target = self.download)
         # === microbroadcast
         self.segment_list = list()
+        self.overhear_list = list()
         self.broadcast_port = broadcast_port
         self.broadcast_list = deque()
         self.broadcast_thread = Thread(target = self.broadcast)
         self.overhear_thread = Thread(target = self.overhear)
+    def add_segment_list(self, segment):
+        # done list
+        self.segment_list.append(segment)
+        if len(self.segment_list) == 2:
+            for segment in self.segment_list:
+                if segment.endswith('.m3u8'):
+                    segment = os.path.join(self.store_dir, segment)
+                    try:
+                        subprocess.Popen([PLAYER_PATH, segment])
+                    except Exception as e:
+                        print('[ERROR] play video: {}.'.format(e))
+                    break
     def download(self):
         while not self.stop_flag:
             if self.download_list:
@@ -55,8 +72,9 @@ class MicroCast(object):
                 store_path = os.path.join(self.store_dir, file_name)
                 try:
                     urlretrieve(segment, store_path)
-                    self.segment_list.append(file_name)
-                    self.broadcast_list.append(store_path)
+                    self.add_segment_list(file_name)
+                    flog.write('{} {}\n'.format(time.time(), file_name))
+                    self.broadcast_list.append((BYTES_FILE, file_name))
                     data = 'DONE;{}'.format(segment).encode()
                     data += BYTE_SPACE * (RECV_BUFSIZE - len(data))
                     self.client_socket.send(data)
@@ -84,6 +102,7 @@ class MicroCast(object):
             self.download_thread.start()
             self.overhear_thread.start()
             self.broadcast_thread.start()
+            flog.write('{}\n'.format(time.time()))
             while not self.stop_flag:
                 read_sockets, write_sockets, error_sockets = select.select([self.client_socket], [], [])
                 for sock in read_sockets:
@@ -92,14 +111,17 @@ class MicroCast(object):
                         self.handle_response(sock, data)
         except Exception as e:
             print('[ERROR] run: {}.'.format(e))
+        flog.write('{}\n'.format(time.time()))
         self.stop_flag = True
         while self.download_thread.is_alive():
             self.download_thread.join(TIMEOUT)
         while self.overhear_thread.is_alive():
             self.overhear_thread.join(TIMEOUT)
         while self.broadcast_thread.is_alive():
-            self.broadcast_thread.join(TIMEOUT)
+            pass
+            # self.broadcast_thread.join(TIMEOUT)
         self.client_socket.close()
+        flog.close()
     # === microbroadcast
     def broadcast(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -108,21 +130,30 @@ class MicroCast(object):
         while not self.stop_flag or self.broadcast_list:
             if not self.broadcast_list:
                 continue
-            file_path = self.broadcast_list.popleft()
-            file_name = file_path.split(os.sep)[-1]
-            FILEBYTES_SIZE = BROADCAST_BUFSIZE - 2 - len(file_name.encode())
-            fd = open(file_path, 'rb')
-            filebytes = fd.read(FILEBYTES_SIZE)
-            while filebytes:
-                data = BYTES_FILE + file_name.encode() + BYTES_SEP + filebytes
-                sock.sendto(data, broadcast_address)
-                filebytes = fd.read(FILEBYTES_SIZE)
-            fd.close()
-            # send EOF
-            file_size = os.stat(file_path).st_size
-            data = BYTES_FILE_EOF + file_name.encode() + BYTES_SEP + str(file_size).encode()
-            sock.sendto(data, broadcast_address)
-            print('Broadcast {}.'.format(file_name))
+            broadcast_type, file_name = self.broadcast_list.popleft()
+            read_sockets, write_sockets, error_sockets = select.select([], [sock], [], 0)
+            for s in write_sockets:
+                if s == sock:
+                    if broadcast_type == BYTES_FILE:
+                        file_path = os.path.join(self.store_dir, file_name)
+                        FILEBYTES_SIZE = BROADCAST_BUFSIZE - 2 - len(file_name.encode())
+                        fd = open(file_path, 'rb')
+                        filebytes = fd.read(FILEBYTES_SIZE)
+                        while filebytes:
+                            data = BYTES_FILE + file_name.encode() + BYTES_SEP + filebytes
+                            sock.sendto(data, broadcast_address)
+                            filebytes = fd.read(FILEBYTES_SIZE)
+                        fd.close()
+                        # send EOF
+                        file_size = os.stat(file_path).st_size
+                        data = BYTES_FILE_EOF + file_name.encode() + BYTES_SEP + str(file_size).encode()
+                        sock.sendto(data, broadcast_address)
+                        print('Broadcast {}.'.format(file_name))
+                    elif broadcast_type == BYTES_REQ:
+                        data = BYTES_REQ + file_name.encode()
+                        data += BYTE_SPACE * (BROADCAST_BUFSIZE - len(data))
+                        sock.sendto(data, broadcast_address)
+                        print('Request {} again.'.format(file_name))
         sock.close()
     def overhear(self):
         sock = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
@@ -140,7 +171,9 @@ class MicroCast(object):
                         file_name = data[1:sep].decode()
                         if file_name in self.segment_list:
                             continue
-                        print('Overhear file {}.'.format(file_name))
+                        if file_name not in self.overhear_list:
+                            print('Overhearing file {}.'.format(file_name))
+                            self.overhear_list.append(file_name)
                         file_path = os.path.join(self.store_dir, file_name)
                         fd = open(file_path, 'ab')
                         fd.write(data[sep + 1:])
@@ -156,15 +189,21 @@ class MicroCast(object):
                         try:
                             expected_file_size = int(data[sep + 1:].decode())
                             if file_size == expected_file_size:
-                                self.segment_list.append(file_name)
+                                self.add_segment_list(file_name)
                                 print('Received file {}.'.format(file_name))
+                            else:
+                                os.remove(file_path)
+                                self.broadcast_list.append((BYTES_REQ, file_name))
+                                self.overhear_list.remove(file_name)
                         except Exception as e:
                             print('[ERROR] Receive {} error.'.format(file_name))
-                            print('[ERROR] Expected file size: {}. Received file size: {}.'.format(
-                                expected_file_size, file_size))
+                            print('[ERROR] {}.'.format(e))
                     elif data.startswith(BYTES_REQ):
-                        # TODO: someone request a missing segment
-                        pass
+                        # TODO: Network Coding
+                        data = data.strip()
+                        file_name = data[1:sep].decode()
+                        if file_name in self.segment_list and file_name not in self.overhear_list:
+                            self.broadcast_list.append((BYTES_FILE, file_name))
                     break
         sock.close()
 

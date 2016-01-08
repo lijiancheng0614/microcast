@@ -75,7 +75,8 @@ class MicroCastCommander(object):
             sock.send(data)
             sock.close()
         self.server_socket.close()
-    def get_smallest(self, d):
+    def get_smallest(self, dic):
+        d = dic.copy() # if not, dictionary changed size during iteration
         return min(d.items(), key=lambda x:len(x[1]))
     def run(self):
         print('{}:{} start.'.format(self.address[0], self.address[1]))
